@@ -51,6 +51,7 @@ COLUMN_MAPPING = {
     'Weekly Achievement (AOV)': ['Weekly Achievement (AOV)'],
     'AOV Achievement %': ['AOV Achievement %', 'AOV Achievement  %'],
     'AOV Score': ['AOV Score'],
+    'Year': ['Year'],
 }
 
 STANDARD_COLUMNS = list(COLUMN_MAPPING.keys())
@@ -67,6 +68,7 @@ CRITICAL_COLUMNS = [
     # PH team
     'Weekly Target (Sales Trend %)', 'Weekly Achievement (Sales Trend %)', 'Sales Trend % Score',
     'Weekly Target (Conversion Rate %)', 'Weekly Achievement (Conversion Rate %)', 'Conversion Rate % Score',
+    'Year',
 ]
 
 # ============================================
@@ -363,10 +365,9 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
         st.warning("'Total Score' column not found. Cannot determine perfect scores or display performer chart.")
         return # Exit if no Total Score column
     
-    # --- Star of the Month logic ---
-    # Find employees with at least one perfect score (10) in the selected month,
-    # then among them, select the one(s) with the highest total net sales.
-    if selected_month_filter_val != "All Months" and 'Month' in data_for_view.columns:
+    # --- Star of the Month and Performer of the Week logic ---
+    # Only show Star of the Month if filtering by month only (not week)
+    if selected_month_filter_val != "All Months" and selected_week_filter_val == "All Weeks" and 'Month' in data_for_view.columns:
         month_df = data_for_view[data_for_view['Month'] == selected_month_filter_val].copy()
         if not month_df.empty and 'Total Score' in month_df.columns and 'Weekly Achievement (Sales)' in month_df.columns:
             month_df['Total Score'] = pd.to_numeric(month_df['Total Score'], errors='coerce')
@@ -379,6 +380,20 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
                     stars = sales_sum[sales_sum['Weekly Achievement (Sales)'] == max_sales]['Employee'].tolist()
                     if stars:
                         st.success(f"⭐ Star of the Month ({selected_month_filter_val}): {', '.join(stars)} (Total Net Sales: €{max_sales:,.2f})")
+    # Show Performer of the Week if filtering by week only (not month)
+    elif selected_week_filter_val != "All Weeks" and selected_month_filter_val == "All Months" and 'Week' in data_for_view.columns:
+        week_df = data_for_view[data_for_view['Week'] == selected_week_filter_val].copy()
+        if not week_df.empty and 'Total Score' in week_df.columns and 'Weekly Achievement (Sales)' in week_df.columns:
+            week_df['Total Score'] = pd.to_numeric(week_df['Total Score'], errors='coerce')
+            week_df['Weekly Achievement (Sales)'] = pd.to_numeric(week_df['Weekly Achievement (Sales)'], errors='coerce')
+            perfect_employees = week_df[week_df['Total Score'] == perfect_score]['Employee'].dropna().unique().tolist()
+            if perfect_employees:
+                sales_sum = week_df[week_df['Employee'].isin(perfect_employees)].groupby('Employee')['Weekly Achievement (Sales)'].sum().reset_index()
+                if not sales_sum.empty:
+                    max_sales = sales_sum['Weekly Achievement (Sales)'].max()
+                    stars = sales_sum[sales_sum['Weekly Achievement (Sales)'] == max_sales]['Employee'].tolist()
+                    if stars:
+                        st.success(f"🏅 Performer of the Week (Week {selected_week_filter_val}): {', '.join(stars)} (Net Sales: €{max_sales:,.2f})")
 
     top_performers_df = data_for_view.dropna(subset=['Total Score'])
     top_performers_df = top_performers_df[top_performers_df['Total Score'] == perfect_score]
@@ -392,8 +407,16 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
     if len(top_performers_employees) > 0:
         st.success(f"{len(top_performers_employees)} employee(s) achieved perfect scores ({perfect_score} points) in {current_period_str}!")
         st.markdown("**Congratulations to:**")
+        # Show team name next to each performer
         for performer_name in top_performers_employees:
-            st.markdown(f"- {performer_name}")
+            # Find the team for this performer (use the latest record for that employee)
+            team = None
+            if 'Team' in data_for_view.columns:
+                emp_rows = data_for_view[data_for_view['Employee'] == performer_name]
+                if not emp_rows.empty:
+                    team = emp_rows.iloc[-1]['Team']
+            team_str = f" ({team})" if team and pd.notna(team) else ""
+            st.markdown(f"- {performer_name}{team_str}")
     else:
         st.info(f"No employees achieved a perfect score of {perfect_score} for {current_period_str}.")
     
@@ -510,6 +533,13 @@ def main():
             st.warning("No teams found in the data to select. Please check your data file.")
         selected_team = st.selectbox("Team", team_options, index=0, key="selectbox_team")
 
+        # Year Filter
+        year_options = ["All Years"]
+        if 'Year' in df.columns and df['Year'].notna().any():
+            years_sorted = sorted(df['Year'].dropna().unique())
+            year_options.extend(years_sorted)
+        selected_year = st.selectbox("Year", year_options, index=0, key="selectbox_year")
+
         # Month Filter
         month_options = ["All Months"]
         if 'Month' in df.columns and df['Month'].notna().any():
@@ -553,6 +583,8 @@ def main():
             data_view = data_view[data_view['Team'].isin(team_match)]
         else:
             data_view = data_view.iloc[0:0]  # Empty DataFrame if no match
+    if selected_year != "All Years" and 'Year' in data_view.columns:
+        data_view = data_view[data_view['Year'] == selected_year]
     if selected_month != "All Months" and 'Month' in data_view.columns:
         data_view = data_view[data_view['Month'].astype(str) == selected_month]
     if selected_week_value != "All Weeks" and 'Week' in data_view.columns:
@@ -568,6 +600,14 @@ def main():
     )
     st.markdown("---")
     st.markdown("## Sales Metrics & Trends")
+
+    # --- Handle single employee filter feedback ---
+    if selected_employee_cards != "All Employees":
+        if data_view.empty:
+            st.warning(f"No data available for employee '{selected_employee_cards}' in the selected period.")
+            return
+        else:
+            st.info(f"Showing metrics and trends for employee: {selected_employee_cards}")
 
     # --- Weekly Sales Breakdown ---
     if 'Week' in data_view.columns and 'Weekly Achievement (Sales)' in data_view.columns:
@@ -632,8 +672,9 @@ def main():
         'Weekly Target (Sales)' in data_view.columns and
         'Weekly Achievement (Sales)' in data_view.columns
     ):
-        # Get months with data, sorted by calendar order
-        valid_months = [m for m in calendar.month_name[1:] if m in data_view['Month'].dropna().unique()]
+        # Get months with data, sorted by calendar order, for the current filtered data_view (including employee filter)
+        filtered_months = data_view['Month'].dropna().unique().tolist()
+        valid_months = [m for m in calendar.month_name[1:] if m in filtered_months]
         if len(valid_months) >= 2:
             last_two_months = valid_months[-2:]
             month_trend_df = data_view[data_view['Month'].isin(last_two_months)]
@@ -728,11 +769,21 @@ def main():
         # Use all unique, non-empty employee names in the current filtered data_view
         if 'Employee' in data_view.columns:
             all_employees_in_view = data_view['Employee'].fillna('').astype(str).str.strip()
-            unique_employees = sorted(set([e for e in all_employees_in_view if e and e.lower() != 'nan']))
+            # Compute max Total Score per employee for sorting
+            if 'Total Score' in data_view.columns:
+                score_per_employee = data_view.groupby('Employee', dropna=False)['Total Score'].max().reset_index()
+                score_per_employee['Employee'] = score_per_employee['Employee'].fillna('Unknown').astype(str).str.strip()
+                # Remove empty string employees except 'Unknown'
+                score_per_employee = score_per_employee[score_per_employee['Employee'] != '']
+                # Sort by Total Score descending, then by Employee name for tie-breaker
+                score_per_employee = score_per_employee.sort_values(['Total Score', 'Employee'], ascending=[False, True])
+                unique_employees = [e for e in score_per_employee['Employee'] if e.lower() != 'nan']
+            else:
+                unique_employees = sorted(set([e for e in all_employees_in_view if e and e.lower() != 'nan']))
+            # Ensure 'Unknown' is last if present
+            if 'Unknown' in unique_employees:
+                unique_employees = [e for e in unique_employees if e != 'Unknown'] + ['Unknown']
             employee_order_list = unique_employees
-            # Add 'Unknown' if there are any blank/nan employees
-            if (all_employees_in_view == '').any() or (all_employees_in_view.str.lower() == 'nan').any():
-                employee_order_list.append('Unknown')
         else:
             employee_order_list = []
         for employee_name_iter in employee_order_list:
