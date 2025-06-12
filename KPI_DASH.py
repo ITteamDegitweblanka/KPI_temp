@@ -364,27 +364,26 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
         return # Exit if no Total Score column
     
     # --- Star of the Month logic ---
+    # Find employees with at least one perfect score (10) in the selected month,
+    # then among them, select the one(s) with the highest total net sales.
     if selected_month_filter_val != "All Months" and 'Month' in data_for_view.columns:
-        month_df = data_for_view[data_for_view['Month'] == selected_month_filter_val]
+        month_df = data_for_view[data_for_view['Month'] == selected_month_filter_val].copy()
         if not month_df.empty and 'Total Score' in month_df.columns and 'Weekly Achievement (Sales)' in month_df.columns:
-            # Ensure numeric types for comparison
-            month_df = month_df.copy()
             month_df['Total Score'] = pd.to_numeric(month_df['Total Score'], errors='coerce')
             month_df['Weekly Achievement (Sales)'] = pd.to_numeric(month_df['Weekly Achievement (Sales)'], errors='coerce')
-            # 1. Find employees with at least one perfect score (10) in the month
             perfect_employees = month_df[month_df['Total Score'] == perfect_score]['Employee'].dropna().unique().tolist()
             if perfect_employees:
-                # 2. Among those, find the one(s) with the highest total net sales in the month
                 sales_sum = month_df[month_df['Employee'].isin(perfect_employees)].groupby('Employee')['Weekly Achievement (Sales)'].sum().reset_index()
                 if not sales_sum.empty:
                     max_sales = sales_sum['Weekly Achievement (Sales)'].max()
                     stars = sales_sum[sales_sum['Weekly Achievement (Sales)'] == max_sales]['Employee'].tolist()
                     if stars:
                         st.success(f"⭐ Star of the Month ({selected_month_filter_val}): {', '.join(stars)} (Total Net Sales: €{max_sales:,.2f})")
-    
-    top_performers_df = data_for_view.dropna(subset=['Total Score'])[data_for_view.dropna(subset=['Total Score'])['Total Score'] == perfect_score]
+
+    top_performers_df = data_for_view.dropna(subset=['Total Score'])
+    top_performers_df = top_performers_df[top_performers_df['Total Score'] == perfect_score]
     top_performers_employees = top_performers_df['Employee'].dropna().unique()
-    
+
     period_desc_list = []
     if selected_month_filter_val != "All Months": period_desc_list.append(selected_month_filter_val)
     if selected_week_filter_val != "All Weeks": period_desc_list.append(f"Week {selected_week_filter_val}")
@@ -403,9 +402,8 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
 
     # Prepare data for the chart, ensuring 'Total Score' is numeric and handling NaNs
     if 'Employee' in data_for_view.columns and data_for_view['Total Score'].notna().any():
-        # Use data_for_view which already has 'Total Score' as numeric
         chart_data = data_for_view[['Employee', 'Total Score']].copy()
-        chart_data.dropna(subset=['Total Score'], inplace=True) # Remove rows where score is NaN
+        chart_data.dropna(subset=['Total Score'], inplace=True)
 
         agg_scores_df: pd.DataFrame
         chart_title: str
@@ -416,9 +414,7 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
         elif selected_week_filter_val == "All Weeks" and selected_month_filter_val == "All Months":
             agg_scores_df = chart_data.groupby('Employee')['Total Score'].mean().reset_index()
             chart_title = "Average Total Scores (All Time)"
-        else: 
-            # For specific week/month, take the last score if multiple entries (e.g. if data not perfectly unique)
-            # The data_for_view should ideally have one row per employee per specific period.
+        else:
             agg_scores_df = chart_data.drop_duplicates(subset=['Employee'], keep='last')
             chart_title = f"Total Scores for {current_period_str}"
 
@@ -427,10 +423,10 @@ def display_achievements_and_performers_chart(data_for_view: pd.DataFrame, selec
             fig = px.bar(agg_scores_df, 
                          x='Employee', y='Total Score', title=chart_title,
                          text='Total Score', color='Total Score',
-                         color_continuous_scale=px.colors.sequential.Tealgrn) # Changed color scale
+                         color_continuous_scale=px.colors.sequential.Tealgrn)
             fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
             fig.update_layout(uniformtext_minsize=8, uniformtext_mode='hide', xaxis_tickangle=-45,
-                              height=500) # Increased height for better readability
+                              height=500)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No scores to display in chart after aggregation for the current selection.")
